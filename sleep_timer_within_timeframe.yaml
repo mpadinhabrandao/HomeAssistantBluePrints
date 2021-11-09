@@ -1,0 +1,169 @@
+blueprint:
+  name: Sleep Timer Within Timeframe
+  domain: automation
+  input:
+    timer:
+      name: Timer
+      description: The timer entity
+      selector:
+        entity:
+          domain: timer
+          
+    last_for_minutes:
+      name: Last for ... minutes
+      description: The input number that determines how many minutes
+        the sleep timer should last for
+      selector:
+        entity:
+          domain: input_number
+          
+    timer_active_period_start:
+      name: Start of timer active period
+      description: >
+        This entity stores the begin of the timer active period. Must
+        be an input_datetime: https://www.home-assistant.io/integrations/input_datetime/
+      selector:
+        entity:
+          domain: input_datetime
+          
+    timer_active_period_end:
+      name: End of timer active period
+      description: >
+        This entity stores the end of the timer active period. Must
+        be an input_datetime: https://www.home-assistant.io/integrations/input_datetime/
+      selector:
+        entity:
+          domain: input_datetime
+
+    timer_expire_action:
+      name: Action on Timer Expire
+      description: The action(s) to run when the timer expires
+      default: []
+      selector:
+        action: {}
+
+    timer_start_trigger_entity:
+      name: Timer Start Trigger Entity
+      description: The entity that triggers timer start
+      selector:
+        entity: {}
+        
+    timer_start_trigger_entity_state:
+      name: Timer Start Trigger Entity State
+      description: The entity state that triggers timer start
+      selector:
+        select:
+          options:
+            - "on"
+            - "off"
+  
+mode: restart
+
+variables:
+  timer: !input timer
+  last_for_minutes: !input last_for_minutes
+  last_for_minutes_value: "{{ states(last_for_minutes) | int * 60 }}"
+  timer_active_period_start_entity: !input timer_active_period_start
+  timer_active_period_end_entity: !input timer_active_period_end
+  timer_active_period_start: "{{ states(timer_active_period_start_entity) }}"
+  timer_active_period_end: "{{ states(timer_active_period_end_entity) }}"
+  timer_start_trigger_entity: !input timer_start_trigger_entity
+  timer_start_trigger_entity_state: !input timer_start_trigger_entity_state
+  current_time: "{{ now().strftime('%H:%M:%S') }}"
+  is_timer_active_period: >
+    {% if timer_active_period_start < timer_active_period_end %}
+      {{ False if current_time < timer_active_period_start or current_time >= timer_active_period_end else True }}
+    {% else %}
+      {{ True if current_time < timer_active_period_end or current_time >= timer_active_period_start else False }}
+    {% endif %}
+  has_trigger_state: "{{ states(timer_start_trigger_entity) == timer_start_trigger_entity_state }}"
+  timer_is_active: "{{ states(timer) == 'active' }}"
+    
+trigger:
+  - platform: time
+    at: !input timer_active_period_start
+    
+  - platform: time
+    at: !input timer_active_period_end
+    
+  - platform: state
+    entity_id: !input timer_start_trigger_entity
+    # to: !input timer_start_trigger_entity_state
+    
+  - platform: state
+    entity_id: !input last_for_minutes
+    
+  - platform: state
+    entity_id: !input timer_active_period_start
+    
+  - platform: state
+    entity_id: !input timer_active_period_end
+    
+  - platform: event
+    event_type: timer.finished
+    event_data:
+      entity_id: !input timer
+      
+  - platform: homeassistant
+    event: start
+    
+action:
+  - service: system_log.write
+    data:
+      message: >
+        timer_is_active: {{ timer_is_active }}
+      level: debug
+      logger: blueprints.nevesenin.sleep_timer_within_timeframe
+  # when timer active period
+  - choose:
+    - conditions:
+      - "{{ is_timer_active_period }}"
+      sequence:
+        # when light is on
+        - choose:
+          - conditions:
+            - "{{ has_trigger_state }}"
+            sequence:
+              # when timer is active
+              - choose:
+                - conditions:
+                  - "{{ timer_is_active }}"
+                  sequence:
+                    - service: timer.cancel
+                      data:
+                        entity_id: !input timer
+                    - service: timer.start
+                      data:
+                        entity_id: !input timer
+                        duration: "{{ last_for_minutes_value }}"
+              
+                # when timer is inactive
+                default:
+                  # when timer finished  
+                  - choose:
+                    - conditions:
+                      - "{{ trigger.platform == 'event' and trigger.event.event_type == 'timer.finished' }}"
+                      sequence: !input timer_expire_action
+                    
+                    # when timer has not been started
+                    default:
+                      - service: timer.start
+                        data:
+                          entity_id: !input timer
+                          duration: "{{ last_for_minutes_value }}"
+            
+          # when light is off
+          default:
+            - service: timer.cancel
+              data:
+                entity_id: !input timer
+      
+    
+    # when not timer active period
+    default:
+      - service: timer.cancel
+        data:
+          entity_id: !input timer
+    
+    
+    
