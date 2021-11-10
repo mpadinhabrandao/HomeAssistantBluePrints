@@ -1,0 +1,133 @@
+blueprint:
+  name: Update Thermostat From Persistent Value
+  description: Updates thermostat from persistent value
+  domain: automation
+  input:
+    thermostat:
+      name: Thermostat
+      description: Climate entity which will be updated
+      selector:
+        entity:
+          domain: climate
+    window_sensor:
+      name: Window Open Sensor
+      description: Window sensor is optional.
+      selector:
+        entity:
+          domain: binary_sensor
+      default: []
+    eco_temperature_persistence:
+      name: Eco temperature persistence entity
+      description: >
+        This entity stores the eco temperature.
+        Must be an input_number: https://www.home-assistant.io/integrations/input_number/
+      selector:
+        entity:
+          domain: input_number
+    target_temperature_persistence:
+      name: Target temperature persistence entity
+      description: >
+        This entity stores the target temperature.
+        Must be an input_number: https://www.home-assistant.io/integrations/input_number/
+      selector:
+        entity:
+          domain: input_number
+    target_temperature_start_persistence:
+      name: Target temperature start persistence entity
+      description: >
+        This entity stores the begin of target temperature period.
+        Must be an input_datetime: https://www.home-assistant.io/integrations/input_datetime/
+      selector:
+        entity:
+          domain: input_datetime
+    eco_temperature_start_persistence:
+      name: Eco temperature start
+      description: >
+        This entity stores the begin of eco temperature period.
+        Must be an input_datetime: https://www.home-assistant.io/integrations/input_datetime/
+      selector:
+        entity:
+          domain: input_datetime
+variables:
+  eco_temperature_persistence: !input eco_temperature_persistence
+  target_temperature_persistence: !input target_temperature_persistence
+  eco_temperature: "{{ states(eco_temperature_persistence) | float }}"
+  target_temperature: "{{ states(target_temperature_persistence) | float }}"
+  target_temperature_start_entity: !input target_temperature_start_persistence
+  eco_temperature_start_entity: !input eco_temperature_start_persistence
+  target_temperature_start: "{{ states(target_temperature_start_entity) }}"
+  eco_temperature_start: "{{ states(eco_temperature_start_entity) }}"
+  current_time: "{{ now().strftime('%H:%M:%S') }}"
+  window_sensor: !input window_sensor
+  thermostat: !input thermostat
+  current_set_temperature: "{{ state_attr(thermostat, 'temperature') }}"
+  is_eco_period: >
+    {% if target_temperature_start < eco_temperature_start %}
+      {{ True if current_time < target_temperature_start or current_time >= eco_temperature_start else False }}
+    {% else %}
+      {{ False if current_time < eco_temperature_start or current_time >= target_temperature_start else True }}
+    {% endif %}
+  window_is_open: >
+    {% if window_sensor | default(False, True) %}
+      {{ False if states(window_sensor) == 'off' else True }}
+    {% else %}
+      False
+    {% endif %}
+trigger:
+  - platform: time
+    at: !input target_temperature_start_persistence
+  - platform: time
+    at: !input eco_temperature_start_persistence
+  - platform: state
+    entity_id: !input eco_temperature_persistence
+  - platform: state
+    entity_id: !input target_temperature_persistence
+  - platform: state
+    entity_id: !input target_temperature_start_persistence
+  - platform: state
+    entity_id: !input eco_temperature_start_persistence
+  - platform: state
+    entity_id: !input window_sensor
+action:
+  - service: system_log.write
+    data:
+      message: >
+        eco_temperature: {{ eco_temperature }},
+        target_temperature: {{ target_temperature }},
+        target_temperature_start: {{ target_temperature_start }},
+        eco_temperature_start: {{ eco_temperature_start }},
+        current_time: {{ current_time }},
+        is_eco_period: {{ is_eco_period }},
+        window_is_open: {{ window_is_open }},
+        current_set_temperature: {{ current_set_temperature }}
+      level: debug
+      logger: blueprints.nevesenin.update_thermostat_from_persistence
+  - choose:
+    - conditions:
+      - condition: template
+        value_template: "{{ is_eco_period or window_is_open }}"
+      sequence:
+        - condition: template
+          value_template: "{{ eco_temperature != current_set_temperature }}"
+        - service: system_log.write
+          data:
+            message: update to eco temperature
+            level: debug
+            logger: blueprints.nevesenin.update_thermostat_from_persistence
+        - service: climate.set_temperature
+          data:
+            temperature: "{{ eco_temperature }}"
+            entity_id: !input thermostat
+    default:
+      - condition: template
+        value_template: "{{ target_temperature != current_set_temperature }}"
+      - service: system_log.write
+        data:
+          message: update to target temperature
+          level: debug
+          logger: blueprints.nevesenin.update_thermostat_from_persistence
+      - service: climate.set_temperature
+        data:
+          temperature: "{{ target_temperature }}"
+          entity_id: !input thermostat
+mode: single
