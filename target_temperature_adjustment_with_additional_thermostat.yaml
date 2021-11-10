@@ -42,8 +42,6 @@ trigger:
     entity_id: !input temperature_sensor
   - platform: state
     entity_id: !input climate_source
-  - platform: homeassistant
-    event: start
 condition: "{{ calculated_adjustment != 0 }}"
 action:
   - service: system_log.write
