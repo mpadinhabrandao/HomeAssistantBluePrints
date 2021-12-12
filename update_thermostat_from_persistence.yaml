@@ -87,7 +87,8 @@ trigger:
   - platform: state
     entity_id: !input eco_temperature_start_persistence
   - platform: state
-    entity_id: !input window_sensor
+    entity_id: !input 'window_sensor'
+    to: ~
 action:
   - service: system_log.write
     data:
